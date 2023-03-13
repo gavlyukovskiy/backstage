@@ -75,3 +75,60 @@ export async function fetchContents(options: {
     await res.dir({ targetDir: outputPath });
   }
 }
+
+/**
+ * A helper function that reads the content of a single file from the given URL.
+ * Can be used in your own actions, and also used behind fetch:plain:file
+ *
+ * @public
+ */
+export async function fetchFile(options: {
+  reader: UrlReader;
+  integrations: ScmIntegrations;
+  baseUrl?: string;
+  fetchUrl?: string;
+  outputPath: string;
+}) {
+  const { reader, integrations, baseUrl, fetchUrl = '.', outputPath } = options;
+
+  let fetchUrlIsAbsolute = false;
+  try {
+    // eslint-disable-next-line no-new
+    new URL(fetchUrl);
+    fetchUrlIsAbsolute = true;
+  } catch {
+    /* ignored */
+  }
+
+  // We handle both file locations and url ones
+  if (!fetchUrlIsAbsolute && baseUrl?.startsWith('file://')) {
+    const basePath = baseUrl.slice('file://'.length);
+    const src = resolveSafeChildPath(path.dirname(basePath), fetchUrl);
+    await fs.copy(src, outputPath);
+  } else {
+    let readUrl;
+
+    if (fetchUrlIsAbsolute) {
+      readUrl = fetchUrl;
+    } else if (baseUrl) {
+      const integration = integrations.byUrl(baseUrl);
+      if (!integration) {
+        throw new InputError(`No integration found for location ${baseUrl}`);
+      }
+
+      readUrl = integration.resolveUrl({
+        url: fetchUrl,
+        base: baseUrl,
+      });
+    } else {
+      throw new InputError(
+        `Failed to fetch, template location could not be determined and the fetch URL is relative, ${fetchUrl}`,
+      );
+    }
+
+    const res = await reader.readUrl(readUrl);
+    await fs.ensureDir(outputPath);
+    const buffer = await res.buffer();
+    await fs.outputFileSync(outputPath, buffer.toString());
+  }
+}
